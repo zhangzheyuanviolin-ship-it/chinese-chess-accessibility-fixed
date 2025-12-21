@@ -171,7 +171,7 @@
     <!-- 语音播报核心区域 -->
     <div id="live-region" aria-live="assertive" role="alert"></div>
 
-    <div id="board-container">
+    <div id="board-container" role="grid" aria-label="棋盘，共10行9列">
         <!-- JS 动态生成 -->
     </div>
 
@@ -243,3 +243,510 @@
         place('c',RED,7,1); place('c',RED,7,7);
         place('p',RED,6,0); place('p',RED,6,2); place('p',RED,6,4); place('p',RED,6,6); place('p',RED,6,8);
     }
+    // --- 渲染系统 ---
+    function renderBoard() {
+        const container = document.getElementById('board-container');
+        container.innerHTML = '';
+
+        for (let r = 0; r < ROWS; r++) {
+            for (let c = 0; c < COLS; c++) {
+                const btn = document.createElement('button');
+                btn.className = 'cell-btn';
+                btn.id = `c-${r}-${c}`;
+                btn.dataset.r = r; // 辅助属性
+                btn.dataset.c = c; // 辅助属性
+                btn.tabIndex = 0; // 关键：允许通过键盘/触摸导航
+                
+                // 安卓 TalkBack 双击触发 click
+                btn.onclick = () => onCellClick(r, c);
+                
+                // 触摸事件支持：当手指触摸到格子时立即播报
+                btn.addEventListener('touchstart', (e) => {
+                    e.preventDefault();
+                    announceCellInfo(r, c);
+                });
+                
+                // 焦点事件：当格子获得焦点时播报（键盘导航或触摸探索）
+                btn.addEventListener('focus', () => {
+                    announceCellInfo(r, c);
+                });
+                
+                updateCell(btn, r, c);
+                container.appendChild(btn);
+            }
+        }
+    }
+    
+    // 实时播报格子信息（用于触摸探索）
+    function announceCellInfo(r, c) {
+        const p = board[r][c];
+        let msg = "";
+        
+        if (p) {
+            const colorName = p.color === RED ? "红" : "黑";
+            const pieceName = p.color === RED ? NAMES[p.type].r : NAMES[p.type].b;
+            msg = `${colorName}${pieceName}`;
+        } else {
+            msg = "空位";
+        }
+        
+        msg += `，${r+1}行${c+1}列`;
+        
+        // 如果这个格子是上一步移动的目标，添加提示
+        if (lastMove && ((lastMove.from.r === r && lastMove.from.c === c) || (lastMove.to.r === r && lastMove.to.c === c))) {
+            msg += "，上一步移动位置";
+        }
+        
+        // 如果这个格子被选中，添加提示
+        if (selectedPos && selectedPos.r === r && selectedPos.c === c) {
+            msg += "，已选中";
+        }
+        
+        // 使用即时播报，不打断其他语音
+        const region = document.getElementById('live-region');
+        region.innerText = "";
+        setTimeout(() => {
+            region.innerText = msg;
+        }, 10);
+    }
+
+    // 更新单个格子（核心优化点：ARIA标签构建）
+    function updateCell(btn, r, c) {
+        const p = board[r][c];
+        btn.innerHTML = '';
+        btn.classList.remove('selected', 'last-move');
+
+        if (selectedPos && selectedPos.r === r && selectedPos.c === c) btn.classList.add('selected');
+        if (lastMove && ((lastMove.from.r === r && lastMove.from.c === c) || (lastMove.to.r === r && lastMove.to.c === c))) btn.classList.add('last-move');
+
+        // 构建视觉内容
+        if (p) {
+            const div = document.createElement('div');
+            div.className = `piece ${p.color}`;
+            div.innerText = p.color === RED ? NAMES[p.type].r : NAMES[p.type].b;
+            btn.appendChild(div);
+        }
+
+        // 构建语音标签 (Accessibility Label)
+        // 格式：[状态] [棋子] [位置]
+        let label = "";
+        
+        if (selectedPos && selectedPos.r === r && selectedPos.c === c) {
+            label += "已选中，";
+        }
+
+        if (p) {
+            const colorName = p.color === RED ? "红" : "黑";
+            const pieceName = p.color === RED ? NAMES[p.type].r : NAMES[p.type].b;
+            label += `${colorName}${pieceName}`;
+        } else {
+            label += "空位";
+        }
+
+        // 坐标：对于视障用户，行号列号最准确
+        // 1-10行，1-9列
+        label += `，${r+1}行${c+1}列`;
+
+        btn.setAttribute('aria-label', label);
+    }
+
+    // 更新全盘
+    function refreshView() {
+        for(let r=0; r<ROWS; r++) {
+            for(let c=0; c<COLS; c++) {
+                updateCell(document.getElementById(`c-${r}-${c}`), r, c);
+            }
+        }
+    }
+
+    // --- 语音播报系统 ---
+    function announce(text) {
+        document.getElementById('visual-status').innerText = text;
+        const region = document.getElementById('live-region');
+        
+        // 安卓技巧：先清空，稍后写入，强制触发更新事件
+        region.innerText = "";
+        setTimeout(() => {
+            region.innerText = text;
+        }, 100); 
+    }
+
+    // --- 交互逻辑 ---
+    function onCellClick(r, c) {
+        if (gameOver || aiThinking || currentTurn === BLACK) return;
+
+        const p = board[r][c];
+
+        // 1. 尚未选中棋子
+        if (!selectedPos) {
+            if (!p) {
+                announce(`空位，${r+1}行${c+1}列`);
+            } else if (p.color !== RED) {
+                announce("这是黑棋，您只能操作红棋。");
+            } else {
+                selectedPos = {r, c};
+                refreshView();
+                const name = NAMES[p.type].r;
+                announce(`选中 红${name}。请双击目标位置。`);
+            }
+            return;
+        }
+
+        // 2. 已选中，点击同一子（取消）
+        if (selectedPos.r === r && selectedPos.c === c) {
+            selectedPos = null;
+            refreshView();
+            announce("已取消选中。");
+            return;
+        }
+
+        // 3. 已选中，点击己方其他子（改选）
+        if (p && p.color === RED) {
+            selectedPos = {r, c};
+            refreshView();
+            const name = NAMES[p.type].r;
+            announce(`改选 红${name}。`);
+            return;
+        }
+
+        // 4. 尝试移动或吃子
+        const from = selectedPos;
+        const to = {r, c};
+
+        if (isValidMove(board, from, to)) {
+            // 安全检查：防止送将
+            if (simulateMoveAndCheckSuicide(board, from, to, RED)) {
+                announce("不能移动！否则老帅会被吃掉。");
+                return;
+            }
+
+            // --- 执行玩家移动 ---
+            const movedPiece = board[from.r][from.c];
+            const targetPiece = board[to.r][to.c]; // 记录被吃掉的子
+            
+            makeMove(board, from, to);
+            lastMove = {from, to};
+            selectedPos = null;
+            refreshView();
+
+            // 构建玩家语音
+            let msg = `红${NAMES[movedPiece.type].r}`;
+            if (targetPiece) {
+                msg += ` 吃掉了 黑${NAMES[targetPiece.type].b}`;
+            } else {
+                msg += ` 移动到 ${to.r+1}行${to.c+1}列`;
+            }
+
+            // 判断是否将军或绝杀
+            if (isCheckMate(board, BLACK)) {
+                gameOver = true;
+                announce(msg + "。绝杀！您赢了！");
+                return;
+            }
+            if (isCheck(board, BLACK)) {
+                msg += "，将军！"; // 重点：加上将军提示
+            } else {
+                msg += "。";
+            }
+            
+            msg += " 请等待电脑思考。";
+            announce(msg);
+
+            // 轮到AI
+            currentTurn = BLACK;
+            aiThinking = true;
+            setTimeout(aiTurn, 1000); // 留出时间播报玩家动作
+
+        } else {
+            announce("不符合走棋规则。");
+        }
+    }
+
+    // --- AI 逻辑 ---
+    function aiTurn() {
+        if (gameOver) return;
+
+        // 使用 Minimax 搜索
+        const bestMove = getBestMove(board, 2, BLACK); // 深度2，保证手机流畅度
+
+        if (!bestMove) {
+            gameOver = true;
+            announce("黑方认输，红方获胜！");
+            return;
+        }
+
+        const from = bestMove.from;
+        const to = bestMove.to;
+        const movedPiece = board[from.r][from.c];
+        const targetPiece = board[to.r][to.c];
+
+        makeMove(board, from, to);
+        lastMove = {from, to};
+        refreshView();
+
+        // 构建 AI 语音
+        let msg = `电脑走了 黑${NAMES[movedPiece.type].b}`;
+        if (targetPiece) {
+            msg += ` 吃掉了您的 红${NAMES[targetPiece.type].r}`;
+        } else {
+            msg += ` 到 ${to.r+1}行${to.c+1}列`;
+        }
+
+        if (isCheckMate(board, RED)) {
+            gameOver = true;
+            announce(msg + "。绝杀！电脑赢了。");
+            return;
+        }
+
+        if (isCheck(board, RED)) {
+            msg += "，将军！注意防御！";
+        } else {
+            msg += "。轮到您。";
+        }
+
+        currentTurn = RED;
+        aiThinking = false;
+        announce(msg);
+    }
+    // --- 算法核心 (Minimax + AlphaBeta) ---
+    function getBestMove(bd, depth, player) {
+        let moves = generateLegalMoves(bd, player);
+        if (moves.length === 0) return null;
+
+        // 简单排序优化：优先考虑吃子的步
+        moves.sort((a, b) => {
+            const valA = bd[a.to.r][a.to.c] ? PIECE_VALS[bd[a.to.r][a.to.c].type] : 0;
+            const valB = bd[b.to.r][b.to.c] ? PIECE_VALS[bd[b.to.r][b.to.c].type] : 0;
+            return valB - valA;
+        });
+
+        let bestMove = moves[0];
+        let bestVal = -Infinity;
+        let alpha = -Infinity;
+        let beta = Infinity;
+
+        for (let move of moves) {
+            const captured = bd[move.to.r][move.to.c];
+            makeMove(bd, move.from, move.to);
+            let val = minimax(bd, depth - 1, false, alpha, beta);
+            undoMove(bd, move.from, move.to, captured);
+
+            if (val > bestVal) {
+                bestVal = val;
+                bestMove = move;
+            }
+            alpha = Math.max(alpha, bestVal);
+        }
+        return bestMove;
+    }
+
+    function minimax(bd, depth, isMaximizing, alpha, beta) {
+        if (depth === 0) return evaluate(bd);
+
+        if (isMaximizing) { // 黑方回合
+            let maxEval = -Infinity;
+            let moves = generateLegalMoves(bd, BLACK);
+            if (moves.length === 0) return -20000; // 输了
+            
+            for (let move of moves) {
+                const captured = bd[move.to.r][move.to.c];
+                // 剪枝：如果能吃帅，直接返回最大值
+                if (captured && captured.type === 'k') return 20000;
+                
+                makeMove(bd, move.from, move.to);
+                let eval = minimax(bd, depth - 1, false, alpha, beta);
+                undoMove(bd, move.from, move.to, captured);
+                
+                maxEval = Math.max(maxEval, eval);
+                alpha = Math.max(alpha, eval);
+                if (beta <= alpha) break;
+            }
+            return maxEval;
+        } else { // 红方回合 (Min)
+            let minEval = Infinity;
+            let moves = generateLegalMoves(bd, RED);
+            if (moves.length === 0) return 20000; // 黑方赢了
+
+            for (let move of moves) {
+                const captured = bd[move.to.r][move.to.c];
+                if (captured && captured.type === 'k') return -20000;
+
+                makeMove(bd, move.from, move.to);
+                let eval = minimax(bd, depth - 1, true, alpha, beta);
+                undoMove(bd, move.from, move.to, captured);
+
+                minEval = Math.min(minEval, eval);
+                beta = Math.min(beta, eval);
+                if (beta <= alpha) break;
+            }
+            return minEval;
+        }
+    }
+
+    function evaluate(bd) {
+        let score = 0;
+        for (let r = 0; r < ROWS; r++) {
+            for (let c = 0; c < COLS; c++) {
+                const p = bd[r][c];
+                if (p) {
+                    let val = PIECE_VALS[p.type];
+                    // 位置加权：过河卒
+                    if (p.type === 'p') {
+                        if (p.color === BLACK && r > 4) val += 20;
+                        if (p.color === RED && r < 5) val += 20;
+                    }
+                    if (p.color === BLACK) score += val;
+                    else score -= val;
+                }
+            }
+        }
+        return score;
+    }
+
+    // --- 规则辅助 ---
+    function generateLegalMoves(bd, color) {
+        let moves = [];
+        for (let r = 0; r < ROWS; r++) {
+            for (let c = 0; c < COLS; c++) {
+                const p = bd[r][c];
+                if (p && p.color === color) {
+                    // 获取物理可行步
+                    let candidates = getPotentialMoves(bd, r, c, p.type);
+                    for (let to of candidates) {
+                        // 过滤自杀步
+                        if (!simulateMoveAndCheckSuicide(bd, {r,c}, to, color)) {
+                            moves.push({from: {r,c}, to});
+                        }
+                    }
+                }
+            }
+        }
+        return moves;
+    }
+
+    function makeMove(bd, from, to) {
+        bd[to.r][to.c] = bd[from.r][from.c];
+        bd[from.r][from.c] = null;
+    }
+
+    function undoMove(bd, from, to, captured) {
+        bd[from.r][from.c] = bd[to.r][to.c];
+        bd[to.r][to.c] = captured;
+    }
+
+    function simulateMoveAndCheckSuicide(bd, from, to, color) {
+        const captured = bd[to.r][to.c];
+        makeMove(bd, from, to);
+        const suicidal = isCheck(bd, color);
+        undoMove(bd, from, to, captured);
+        return suicidal;
+    }
+
+    function isCheck(bd, color) {
+        let kPos = null;
+        // 找老将
+        for (let r = 0; r < ROWS; r++) {
+            for (let c = 0; c < COLS; c++) {
+                const p = bd[r][c];
+                if (p && p.type === 'k' && p.color === color) {
+                    kPos = {r, c};
+                    break;
+                }
+            }
+        }
+        if (!kPos) return true; // 没将了
+
+        // 检查敌方是否能吃到kPos
+        const enemy = color === RED ? BLACK : RED;
+        for (let r = 0; r < ROWS; r++) {
+            for (let c = 0; c < COLS; c++) {
+                const p = bd[r][c];
+                if (p && p.color === enemy) {
+                    if (isValidMove(bd, {r,c}, kPos)) return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    function isCheckMate(bd, color) {
+        if (!isCheck(bd, color)) return false;
+        return generateLegalMoves(bd, color).length === 0;
+    }
+
+    function isValidMove(bd, from, to) {
+        const p = bd[from.r][from.c];
+        const t = bd[to.r][to.c];
+        if (!p) return false;
+        if (t && t.color === p.color) return false;
+
+        const dx = to.c - from.c;
+        const dy = to.r - from.r;
+        const adx = Math.abs(dx);
+        const ady = Math.abs(dy);
+
+        switch (p.type) {
+            case 'r': // 车
+                return (dx === 0 || dy === 0) && countObs(bd, from, to) === 0;
+            case 'n': // 马
+                if (adx === 1 && ady === 2) return !bd[from.r + (dy > 0 ? 1 : -1)][from.c];
+                if (adx === 2 && ady === 1) return !bd[from.r][from.c + (dx > 0 ? 1 : -1)];
+                return false;
+            case 'b': // 象
+                if (adx !== 2 || ady !== 2) return false;
+                if (bd[from.r + dy / 2][from.c + dx / 2]) return false;
+                if (p.color === RED && to.r < 5) return false;
+                if (p.color === BLACK && to.r > 4) return false;
+                return true;
+            case 'a': // 士
+                if (adx !== 1 || ady !== 1) return false;
+                return inPalace(to, p.color);
+            case 'k': // 将/帅
+                if (adx + ady !== 1) return false;
+                return inPalace(to, p.color);
+            case 'c': // 炮
+                const obs = countObs(bd, from, to);
+                return (dx === 0 || dy === 0) && (t ? obs === 1 : obs === 0);
+            case 'p': // 兵/卒
+                const dir = p.color === RED ? -1 : 1;
+                const crossed = p.color === RED ? from.r < 5 : from.r > 4;
+                if (dy === dir && adx === 0) return true;
+                if (crossed && dy === 0 && adx === 1) return true;
+                return false;
+        }
+        return false;
+    }
+
+    function getPotentialMoves(bd, r, c, type) {
+        let res = [];
+        // 简化全图遍历（对于JS性能完全足够）
+        for (let tr = 0; tr < ROWS; tr++) {
+            for (let tc = 0; tc < COLS; tc++) {
+                if (isValidMove(bd, {r,c}, {r:tr, c:tc})) {
+                    res.push({r:tr, c:tc});
+                }
+            }
+        }
+        return res;
+    }
+
+    function countObs(bd, from, to) {
+        let cnt = 0;
+        if (from.r === to.r) {
+            const min = Math.min(from.c, to.c) + 1;
+            const max = Math.max(from.c, to.c);
+            for (let c = min; c < max; c++) if (bd[from.r][c]) cnt++;
+        } else {
+            const min = Math.min(from.r, to.r) + 1;
+            const max = Math.max(from.r, to.r);
+            for (let r = min; r < max; r++) if (bd[r][from.c]) cnt++;
+        }
+        return cnt;
+    }
+    function inPalace(pos, color) {
+        if (pos.c < 3 || pos.c > 5) return false;
+        return color === RED ? pos.r >= 7 : pos.r <= 2;
+    }
+</script>
+</body>
+</html>
