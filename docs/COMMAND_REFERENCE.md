@@ -1,62 +1,60 @@
-## 🔧 问题修复命令
+## 📁 文件操作命令
 
-### 包名不一致修复
+### 文件查找与验证
 ```bash
-# 检查当前包名配置
-grep 'widget id' config.xml | sed 's/.*id="//' | sed 's/".*//'
+# 查找配置文件
+find . -name "config.xml" -type f
+find . -name "cdv-gradle-config.json" -type f
+find . -name "cordova.gradle" -type f
 
-# 修改config.xml包名
-sed -i 's/<widget id="旧包名"/<widget id="com.example.chessapp"/' config.xml
-
-# 重新生成平台文件
-cordova platform rm android
-cordova platform add android@10
-
-# 验证包名一致性
-echo "Config: $(grep 'widget id' config.xml | sed 's/.*id="//' | sed 's/".*//')"
-echo "Java: $(find platforms/android -name 'MainActivity.java' -exec grep '^package' {} \; | sed 's/package //' | sed 's/;//')"
-```
-
-### 构建工具版本修复
-```bash
-# 修改cdv-gradle-config.json
-sed -i 's/"MIN_BUILD_TOOLS_VERSION": "30.0.3"/"MIN_BUILD_TOOLS_VERSION": "30.0.2"/' platforms/android/cdv-gradle-config.json
-
-# 备份cordova.gradle
-cp platforms/android/cordova.gradle platforms/android/cordova.gradle.backup
-
-# 修改cordova.gradle第一处（版本检查）
-# 编辑文件，在第185-189行附近添加特殊处理
-# if (minBuildToolsVersionString == "30.0.3" && highestBuildToolsVersion.getOriginalString() == "30.0.2") {
-#     println "WARNING: Using build tools 30.0.2 instead of required 30.0.3"
-#     return highestBuildToolsVersion
-# }
-
-# 修改cordova.gradle第二处（函数内检查）
-# 在doFindLatestInstalledBuildTools函数中添加相同处理
-```
-
-### Java文件问题修复
-```bash
-# 删除问题Java文件
-rm -f platforms/android/app/src/main/java/com/example/chessapp/MainActivity.java
-
-# 重新生成平台
-cordova platform rm android
-cordova platform add android@10
-
-# 验证Java文件生成
+# 查找Java文件
+find platforms/android -name "*.java" -type f
 find platforms/android -name "MainActivity.java" -type f
+
+# 检查文件权限
+ls -la platforms/android/app/src/main/java/com/example/chessapp/
+
+# 检查文件内容
+head -50 platforms/android/app/src/main/java/com/example/chessapp/MainActivity.java
 ```
 
-### Cordova版本修复
+### 文件备份与恢复
 ```bash
-# 移除错误版本
-cordova platform rm android
+# 备份重要文件
+backup_files() {
+    mkdir -p backup/$(date +%Y%m%d)
+    cp config.xml backup/$(date +%Y%m%d)/
+    cp platforms/android/cdv-gradle-config.json backup/$(date +%Y%m%d)/
+    cp platforms/android/cordova.gradle backup/$(date +%Y%m%d)/
+    cp platforms/android/app/src/main/java/com/example/chessapp/MainActivity.java backup/$(date +%Y%m%d)/ 2>/dev/null || true
+    echo "文件已备份到 backup/$(date +%Y%m%d)/"
+}
 
-# 添加兼容版本（必须）
-cordova platform add android@10
+# 恢复文件
+restore_files() {
+    if [ -d "backup/$1" ]; then
+        cp backup/$1/config.xml .
+        cp backup/$1/cdv-gradle-config.json platforms/android/
+        cp backup/$1/cordova.gradle platforms/android/
+        cp backup/$1/MainActivity.java platforms/android/app/src/main/java/com/example/chessapp/ 2>/dev/null || true
+        echo "文件已从 backup/$1/ 恢复"
+    else
+        echo "备份目录 backup/$1/ 不存在"
+    fi
+}
+```
 
-# 验证版本
-cordova platform list | grep android
+### 文件差异比较
+```bash
+# 比较文件差异
+diff platforms/android/cordova.gradle platforms/android/cordova.gradle.backup
+
+# 查看文件修改内容
+git diff platforms/android/cordova.gradle
+
+# 检查文件编码
+file platforms/android/app/src/main/java/com/example/chessapp/MainActivity.java
+
+# 检查文件行数
+wc -l platforms/android/app/src/main/java/com/example/chessapp/MainActivity.java
 ```
