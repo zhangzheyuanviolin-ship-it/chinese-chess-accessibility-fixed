@@ -1,66 +1,62 @@
-## 🛠️ 构建相关命令
+## 🔧 问题修复命令
 
-### 标准构建流程
+### 包名不一致修复
 ```bash
-# 1. 清理项目
-cordova clean
+# 检查当前包名配置
+grep 'widget id' config.xml | sed 's/.*id="//' | sed 's/".*//'
 
-# 2. 准备平台文件
-cordova prepare android
+# 修改config.xml包名
+sed -i 's/<widget id="旧包名"/<widget id="com.example.chessapp"/' config.xml
 
-# 3. 构建调试版APK
-cordova build android
-# 或
-cordova build android --debug
+# 重新生成平台文件
+cordova platform rm android
+cordova platform add android@10
 
-# 4. 构建发布版APK
-cordova build android --release
+# 验证包名一致性
+echo "Config: $(grep 'widget id' config.xml | sed 's/.*id="//' | sed 's/".*//')"
+echo "Java: $(find platforms/android -name 'MainActivity.java' -exec grep '^package' {} \; | sed 's/package //' | sed 's/;//')"
 ```
 
-### Gradle直接构建
+### 构建工具版本修复
 ```bash
-# 进入Android平台目录
-cd platforms/android
+# 修改cdv-gradle-config.json
+sed -i 's/"MIN_BUILD_TOOLS_VERSION": "30.0.3"/"MIN_BUILD_TOOLS_VERSION": "30.0.2"/' platforms/android/cdv-gradle-config.json
 
-# 清理构建
-./gradlew clean
+# 备份cordova.gradle
+cp platforms/android/cordova.gradle platforms/android/cordova.gradle.backup
 
-# 构建调试版
-./gradlew assembleDebug
+# 修改cordova.gradle第一处（版本检查）
+# 编辑文件，在第185-189行附近添加特殊处理
+# if (minBuildToolsVersionString == "30.0.3" && highestBuildToolsVersion.getOriginalString() == "30.0.2") {
+#     println "WARNING: Using build tools 30.0.2 instead of required 30.0.3"
+#     return highestBuildToolsVersion
+# }
 
-# 构建发布版
-./gradlew assembleRelease
-
-# 查看构建任务
-./gradlew tasks
+# 修改cordova.gradle第二处（函数内检查）
+# 在doFindLatestInstalledBuildTools函数中添加相同处理
 ```
 
-### 构建选项
+### Java文件问题修复
 ```bash
-# 启用详细输出
-cordova build android --verbose
+# 删除问题Java文件
+rm -f platforms/android/app/src/main/java/com/example/chessapp/MainActivity.java
 
-# 指定构建架构
-cordova build android -- --gradleArg=-PcdvBuildArch=arm64
+# 重新生成平台
+cordova platform rm android
+cordova platform add android@10
 
-# 禁用压缩（调试用）
-cordova build android -- --gradleArg=-PcdvEnableCompression=false
-
-# 指定构建工具版本
-cordova build android -- --gradleArg=-Pandroid.buildToolsVersion=30.0.2
+# 验证Java文件生成
+find platforms/android -name "MainActivity.java" -type f
 ```
 
-### 构建产物查找
+### Cordova版本修复
 ```bash
-# 查找所有APK文件
-find platforms/android -name "*.apk" -type f
+# 移除错误版本
+cordova platform rm android
 
-# 查找调试版APK
-find platforms/android -name "app-debug.apk" -type f
+# 添加兼容版本（必须）
+cordova platform add android@10
 
-# 查找发布版APK
-find platforms/android -name "app-release.apk" -type f
-
-# 查看APK信息
-ls -lh platforms/android/app/build/outputs/apk/*/*.apk
+# 验证版本
+cordova platform list | grep android
 ```
