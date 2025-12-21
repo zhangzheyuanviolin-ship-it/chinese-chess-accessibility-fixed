@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <!-- 关键：针对安卓WebView的视口优化，禁止缩放，适配全面屏 -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <!-- 允许作为Web App运行 -->
+    <meta name="mobile-web-app-capable" content="yes">
+    <title>中国象棋无障碍版</title>
+    <style>
+        :root {
+            --board-bg: #eecd99;
+            --line-color: #5c4033;
+            --focus-color: #ff9800; /* 安卓高亮色通常偏暖 */
+            --grid-size: 11vw; /* 动态计算格子大小 */
+        }
+
+        body {
+            font-family: "Noto Sans SC", "Droid Sans Fallback", sans-serif; /* 安卓通用字体 */
+            background-color: #202020;
+            color: #eeeeee;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: flex-start;
+            min-height: 100vh;
+            margin: 0;
+            padding: 0;
+            -webkit-user-select: none; /* 禁止选中文本 */
+            user-select: none;
+            touch-action: manipulation;
+        }
+
+        /* 顶部状态栏 */
+        header {
+            width: 100%;
+            padding: 10px 0;
+            background-color: #333;
+            text-align: center;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.5);
+            z-index: 10;
+        }
+
+        h1 {
+            font-size: 1.2rem;
+            margin: 0;
+            color: #fff;
+        }
+
+        /* 视觉状态文本（辅助视力尚存的用户） */
+        #visual-status {
+            margin-top: 5px;
+            font-size: 1rem;
+            color: #ccc;
+            min-height: 1.5em;
+        }
+
+        /* 盲人专用语音通道：使用 assertive 确保打断并立即播报 */
+        #live-region {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            overflow: hidden;
+            clip: rect(0,0,0,0);
+            white-space: nowrap;
+        }
+
+        /* 棋盘区域 */
+        #board-container {
+            margin-top: 20px;
+            padding: 5px;
+            background-color: var(--line-color);
+            border-radius: 4px;
+            /* 保持宽高比 */
+            width: 96vw;
+            max-width: 500px;
+            aspect-ratio: 9 / 11; /* 10行9列 + 边距 */
+            display: grid;
+            grid-template-columns: repeat(9, 1fr);
+            grid-template-rows: repeat(10, 1fr);
+            gap: 2px;
+        }
+
+        /* 棋盘格子（按钮） */
+        .cell-btn {
+            position: relative;
+            background-color: var(--board-bg);
+            border: none;
+            padding: 0;
+            margin: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            /* 安卓无障碍建议最小点击区域 48dp，这里通过flex拉伸保证尽量大 */
+            width: 100%;
+            height: 100%;
+        }
+
+        /* 选中状态 */
+        .cell-btn.selected {
+            background-color: #a5d6a7; /* 浅绿 */
+            box-shadow: inset 0 0 0 3px #2e7d32;
+        }
+
+        /* 上一步落子提示（视觉） */
+        .cell-btn.last-move {
+            background-color: #fff59d; /* 浅黄 */
+        }
+
+        /* 棋子通用样式 */
+        .piece {
+            width: 88%;
+            height: 88%;
+            border-radius: 50%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-size: clamp(16px, 5vw, 28px);
+            font-weight: bold;
+            box-shadow: 2px 2px 4px rgba(0,0,0,0.4);
+            background-color: #fdf5e6; /* 象牙白 */
+            border-width: 2px;
+            border-style: solid;
+        }
+
+        /* 红方样式 */
+        .piece.red {
+            color: #c00;
+            border-color: #c00;
+        }
+
+        /* 黑方样式 */
+        .piece.black {
+            color: #000;
+            border-color: #000;
+        }
+
+        /* 楚河汉界视觉分隔（可选，为了不干扰网格布局，这里仅作细微边框处理） */
+        .cell-btn[data-r="4"] {
+            border-bottom: 2px solid rgba(0,0,0,0.2);
+        }
+
+        /* 底部控制区 */
+        .controls {
+            margin-top: 20px;
+            width: 100%;
+            display: flex;
+            justify-content: center;
+            padding-bottom: 20px;
+        }
+
+        .restart-btn {
+            background-color: #1976d2;
+            color: white;
+            border: none;
+            padding: 12px 30px;
+            font-size: 1.1rem;
+            border-radius: 25px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+            /* 确保安卓 TalkBack 能识别 */
+        }
+    </style>
+</head>
+<body>
+
+    <header>
+        <h1>中国象棋 (安卓无障碍版)</h1>
+        <div id="visual-status">红方(您) vs 黑方(AI)</div>
+    </header>
+
+    <!-- 语音播报核心区域 -->
+    <div id="live-region" aria-live="assertive" role="alert"></div>
+
+    <div id="board-container">
+        <!-- JS 动态生成 -->
+    </div>
+
+    <div class="controls">
+        <button class="restart-btn" onclick="initGame()">重新开始游戏</button>
+    </div>
+
+<script>
+    // --- 游戏配置 ---
+    const ROWS = 10;
+    const COLS = 9;
+    const RED = 'red';
+    const BLACK = 'black';
+
+    // 修正后的汉字映射（确保无错别字）
+    const NAMES = {
+        'k': { r: '帅', b: '将' },
+        'a': { r: '仕', b: '士' },
+        'b': { r: '相', b: '象' },
+        'n': { r: '马', b: '马' },
+        'r': { r: '车', b: '车' },
+        'c': { r: '炮', b: '砲' }, // 黑方改为石字旁砲，更标准
+        'p': { r: '兵', b: '卒' }
+    };
+
+    // 棋子价值（用于AI计算）
+    const PIECE_VALS = { 'k': 10000, 'r': 900, 'n': 400, 'c': 450, 'b': 200, 'a': 200, 'p': 100 };
+
+    let board = [];
+    let currentTurn = RED;
+    let selectedPos = null;
+    let lastMove = null;
+    let gameOver = false;
+    let aiThinking = false;
+
+    // --- 初始化 ---
+    window.onload = function() {
+        initGame();
+        // 针对安卓WebView的额外优化：防止长按弹出菜单
+        document.oncontextmenu = function(event) {
+            event.preventDefault();
+            event.stopPropagation();
+            return false;
+        };
+    };
+
+    function initGame() {
+        board = Array(ROWS).fill(null).map(() => Array(COLS).fill(null));
+        currentTurn = RED;
+        selectedPos = null;
+        lastMove = null;
+        gameOver = false;
+        aiThinking = false;
+        setupPieces();
+        renderBoard();
+        announce("新游戏开始。您执红棋先行。");
+    }
+
+    function setupPieces() {
+        const place = (t, c, r, col) => board[r][col] = { type: t, color: c };
+        // 黑方 (Top)
+        place('r',BLACK,0,0); place('n',BLACK,0,1); place('b',BLACK,0,2); place('a',BLACK,0,3); place('k',BLACK,0,4);
+        place('a',BLACK,0,5); place('b',BLACK,0,6); place('n',BLACK,0,7); place('r',BLACK,0,8);
+        place('c',BLACK,2,1); place('c',BLACK,2,7);
+        place('p',BLACK,3,0); place('p',BLACK,3,2); place('p',BLACK,3,4); place('p',BLACK,3,6); place('p',BLACK,3,8);
+        // 红方 (Bottom)
+        place('r',RED,9,0); place('n',RED,9,1); place('b',RED,9,2); place('a',RED,9,3); place('k',RED,9,4);
+        place('a',RED,9,5); place('b',RED,9,6); place('n',RED,9,7); place('r',RED,9,8);
+        place('c',RED,7,1); place('c',RED,7,7);
+        place('p',RED,6,0); place('p',RED,6,2); place('p',RED,6,4); place('p',RED,6,6); place('p',RED,6,8);
+    }
