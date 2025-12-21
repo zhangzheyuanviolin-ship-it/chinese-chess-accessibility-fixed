@@ -1,68 +1,61 @@
-## 📱 安装与部署命令
+## 🐛 调试与诊断命令
 
-### APK文件传输
+### 构建日志分析
 ```bash
-# 复制APK到Android存储
-cp platforms/android/app/build/outputs/apk/debug/app-debug.apk /sdcard/
+# 保存详细构建日志
+cordova build android --verbose 2>&1 | tee build.log
 
-# 通过ADB传输
-adb push platforms/android/app/build/outputs/apk/debug/app-debug.apk /sdcard/
+# 提取错误信息
+grep -i "error\|fail\|exception" build.log
 
-# 验证文件传输
-adb shell ls -lh /sdcard/app-debug.apk
+# 查看错误上下文
+grep -B5 -A5 "error:" build.log
 
-# 计算文件哈希（验证完整性）
-md5sum platforms/android/app/build/outputs/apk/debug/app-debug.apk
-adb shell md5sum /sdcard/app-debug.apk
+# 统计错误类型
+grep -o "error:.*" build.log | sort | uniq -c
+
+# 查看构建时间
+grep "BUILD SUCCESSFUL\|BUILD FAILED" build.log
 ```
 
-### APK安装命令
+### 运行时调试
 ```bash
-# 基本安装
-adb install /sdcard/app-debug.apk
+# 查看应用日志
+adb logcat | grep com.example.chessapp
 
-# 替换安装（保留数据）
-adb install -r /sdcard/app-debug.apk
+# 查看WebView日志
+adb logcat | grep -i "webview\|chromium"
 
-# 授予所有权限安装
-adb install -r -g /sdcard/app-debug.apk
+# 查看JavaScript错误
+adb logcat | grep -i "console\|javascript"
 
-# 安装到特定用户
-adb install --user 0 /sdcard/app-debug.apk
+# 清除日志并重新开始
+adb logcat -c && adb logcat | grep com.example.chessapp
 ```
 
-### 应用管理命令
+### 性能分析
 ```bash
-# 列出已安装应用
-adb shell pm list packages | grep chess
+# 查看构建时间
+time cordova build android
 
-# 卸载应用
-adb uninstall com.example.chessapp
+# 查看内存使用
+adb shell dumpsys meminfo com.example.chessapp
 
-# 强制卸载
-adb uninstall -k com.example.chessapp
+# 查看CPU使用
+adb shell top -n 1 | grep com.example.chessapp
 
-# 清除应用数据
-adb shell pm clear com.example.chessapp
-
-# 启动应用
-adb shell am start -n com.example.chessapp/.MainActivity
-
-# 停止应用
-adb shell am force-stop com.example.chessapp
+# 查看应用启动时间
+adb shell am start -W -n com.example.chessapp/.MainActivity
 ```
 
-### 安装验证
+### 网络调试
 ```bash
-# 检查应用是否安装
-adb shell pm list packages | grep -q "com.example.chessapp" && echo "已安装" || echo "未安装"
+# 查看网络连接
+adb shell netstat -tulpn | grep com.example.chessapp
 
-# 检查应用版本
-adb shell dumpsys package com.example.chessapp | grep versionName
+# 查看WebView网络请求
+adb logcat | grep -i "http\|https\|network"
 
-# 检查应用权限
-adb shell dumpsys package com.example.chessapp | grep permission
-
-# 检查应用运行状态
-adb shell ps | grep com.example.chessapp
+# 启用WebView调试
+adb shell setprop debug.webview.remote_debugging 1
 ```
